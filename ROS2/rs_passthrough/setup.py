@@ -27,6 +27,7 @@ setup(
             'master_arm_bridge = rs_passthrough.master_arm_bridge:main',
             'get_end_effector_pose = rs_passthrough.get_end_effector_pose:main',
             'move_ab = rs_passthrough.move_ab:main',
+            'teach_and_play = rs_passthrough.teach_and_play:main',
         ],
     },
 )

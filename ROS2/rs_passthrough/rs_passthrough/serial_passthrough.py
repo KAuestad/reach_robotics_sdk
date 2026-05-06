@@ -35,6 +35,8 @@ class RSPassthroughNode(Node):
         packets = self.rs_protocol.read()
 
         for packet in packets:
+            if not packet[2]:
+                continue
             ros_packet = Packet()
             ros_packet.device_id = packet[0]
             ros_packet.packet_id = packet[1]
