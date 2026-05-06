@@ -1,4 +1,4 @@
-source /opt/ros/foxy/setup.bash
+source /opt/ros/jazzy/setup.bash
 
 cd ~/workspace
 colcon build
