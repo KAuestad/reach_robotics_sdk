@@ -19,6 +19,79 @@ The Reach Robotics SDK provides an implementation of the Reach System Protocol [
 
 >The prices of supplementary support packages are dependent upon the scope of the request.
 
+## Teach and Play
+
+The `teach_and_play` node lets you teleoperate the Alpha 5 with a master arm, record end-effector poses during operation, and replay them in sequence at a steady continuous speed.
+
+### Prerequisites
+
+- Two serial passthroughs must be running: one for the master arm, one for the Alpha.
+- The `teach_and_play` node must be run in its own terminal so it can read keyboard input.
+
+### Starting up
+
+**Terminal 1** — start the serial passthroughs:
+
+```bash
+source install/setup.bash
+ros2 launch rs_passthrough teach_and_play.launch.py \
+  master_port:=/dev/ttyUSB0 \
+  alpha_port:=/dev/ttyUSB1
+```
+
+**Terminal 2** — start the teach and play node:
+
+```bash
+source install/setup.bash
+ros2 run rs_passthrough teach_and_play
+```
+
+Replace `/dev/ttyUSB0` and `/dev/ttyUSB1` with the serial ports for your hardware.
+
+### Keyboard controls
+
+| Key | Action |
+|-----|--------|
+| `r` | Record the current end-effector pose as the next waypoint (up to 10) |
+| `p` | Start playback of all recorded waypoints |
+| `c` | Clear all recorded waypoints |
+| `ESC` | Abort playback and return to teleoperation |
+| `Ctrl+C` | Shut down the node |
+
+### Workflow
+
+1. **Teleoperate** the arm to the desired positions using the master arm.
+2. **Press `r`** at each position you want to save. The terminal will confirm each recorded waypoint with its index, XYZ position (mm), and orientation (rad). Up to 10 waypoints can be recorded.
+3. **Press `p`** to start playback. The node prints a banner, disables master arm input, and begins executing the sequence:
+   - The arm moves to the first waypoint under position control.
+   - Once within 5 mm, it switches to velocity streaming and traverses all remaining waypoints at 10 mm/s without stopping between them.
+   - On completion the arm holds its final position and teleoperation resumes automatically.
+4. **Press `ESC`** at any time during playback to stop immediately, hold position, and return to teleoperation.
+5. **Press `c`** to clear all waypoints and start a new recording session.
+
+### Parameters
+
+The following parameters can be set at launch via `--ros-args -p <name>:=<value>`:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `speed` | `10.0` | Playback translation speed (mm/s) |
+| `tolerance` | `5.0` | Distance threshold to consider a waypoint reached (mm) |
+| `max_waypoints` | `10` | Maximum number of waypoints that can be recorded |
+| `max_angular_rate` | `0.3` | Maximum orientation correction rate during playback (rad/s) |
+
+Example — increase speed to 20 mm/s:
+
+```bash
+ros2 run rs_passthrough teach_and_play --ros-args -p speed:=20.0
+```
+
+### Notes
+
+- Waypoints store the full 6-DOF pose (XYZ + yaw/pitch/roll). Orientation is tracked during playback using proportional control toward the recorded orientation at each waypoint.
+- Waypoints are held in memory only. They are lost when the node is shut down.
+- The master arm is fully ignored while playback is active.
+
 ## Documentation
 
 Detailed SDK documentation is available on our GitHub pages

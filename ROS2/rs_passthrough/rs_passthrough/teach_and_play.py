@@ -28,14 +28,24 @@ CONTROL_PACKET_IDS = {
     PacketID.INVERSE_KINEMATICS_LOCAL_VELOCITY,
 }
 
-PLAYBACK_BANNER = (
-    '\r\n'
-    '\r\n╔══════════════════════════════════════════════════╗'
-    '\r\n║            PLAYBACK MODE ACTIVE                  ║'
-    '\r\n║  Master arm input is disabled.                   ║'
-    '\r\n║  Press ESC to abort and return to teleoperation. ║'
-    '\r\n╚══════════════════════════════════════════════════╝'
-    '\r\n'
+_W = 56  # banner width
+
+_STARTUP_BANNER = (
+    f'\r\n{"─" * _W}\r\n'
+    '  Teach and Play  —  TELEOP\r\n'
+    f'{"─" * _W}\r\n'
+    '  r    record current position\r\n'
+    '  p    start playback\r\n'
+    '  c    clear all waypoints\r\n'
+    '  ESC  abort playback\r\n'
+    f'{"─" * _W}\r\n'
+)
+
+_PLAYBACK_BANNER = (
+    f'\r\n{"─" * _W}\r\n'
+    '  PLAYBACK MODE  —  master arm disabled\r\n'
+    '  Press ESC to abort and return to TELEOP.\r\n'
+    f'{"─" * _W}\r\n'
 )
 
 
@@ -50,17 +60,17 @@ class TeachAndPlayNode(Node):
     def __init__(self):
         super().__init__('teach_and_play')
 
-        self.declare_parameter('speed', 10.0)           # mm/s
-        self.declare_parameter('tolerance', 5.0)        # mm
+        self.declare_parameter('speed', 10.0)
+        self.declare_parameter('tolerance', 5.0)
         self.declare_parameter('max_waypoints', 10)
-        self.declare_parameter('max_angular_rate', 0.3) # rad/s
-        self.declare_parameter('k_orient', 1.0)         # orientation P-gain
+        self.declare_parameter('max_angular_rate', 1.3)
+        self.declare_parameter('k_orient', 1.0)
 
-        self._speed     = self.get_parameter('speed').value
-        self._tol       = self.get_parameter('tolerance').value
-        self._max_wp    = self.get_parameter('max_waypoints').value
-        self._max_ang   = self.get_parameter('max_angular_rate').value
-        self._k_orient  = self.get_parameter('k_orient').value
+        self._speed    = self.get_parameter('speed').value
+        self._tol      = self.get_parameter('tolerance').value
+        self._max_wp   = self.get_parameter('max_waypoints').value
+        self._max_ang  = self.get_parameter('max_angular_rate').value
+        self._k_orient = self.get_parameter('k_orient').value
 
         self._pub = self.create_publisher(Packet, '/alpha/tx', QUEUE_SIZE)
         self.create_subscription(Packet, '/master/rx', self._on_master, QUEUE_SIZE)
@@ -70,20 +80,34 @@ class TeachAndPlayNode(Node):
         self._pos       = None   # [x, y, z, yaw, pitch, roll]  mm + rad
         self._waypoints = []     # list of 6-element lists
         self._wp_index  = 0
+        self._inline    = False  # True while the current line is being overwritten in place
 
-        self._running = True
+        self._running   = True
         self._kb_thread = threading.Thread(target=self._keyboard_loop, daemon=True)
         self._kb_thread.start()
 
         self.create_timer(1.0 / LOOP_HZ, self._tick)
 
-        self.get_logger().info(
-            'TeachAndPlay ready — TELEOP mode\n'
-            '  r : record current position\n'
-            '  p : start playback\n'
-            '  c : clear all waypoints\n'
-            '  ESC : abort playback'
-        )
+        sys.stdout.write(_STARTUP_BANNER)
+        sys.stdout.flush()
+
+    # ── output helpers ───────────────────────────────────────────────────────
+
+    def _println(self, msg: str):
+        """Print a new line, finishing any active in-place line first."""
+        prefix = '\r\n' if self._inline else ''
+        sys.stdout.write(f'{prefix}{msg}\r\n')
+        sys.stdout.flush()
+        self._inline = False
+
+    def _print_inline(self, msg: str):
+        """Overwrite the current terminal line without advancing to a new one."""
+        sys.stdout.write(f'\r{msg:<{_W}}')
+        sys.stdout.flush()
+        self._inline = True
+
+    def _warn(self, msg: str):
+        self._println(f'  [!] {msg}')
 
     # ── subscriptions ────────────────────────────────────────────────────────
 
@@ -117,17 +141,17 @@ class TeachAndPlayNode(Node):
             target = self._waypoints[0]
             self._send_position(target)
             dist = self._xyz_dist(self._pos, target)
-            self.get_logger().info(f'[→ wp0]  dist: {dist:.1f} mm')
+            self._print_inline(f'  Moving to wp 0 ...  {dist:.1f} mm remaining')
             if dist < self._tol:
                 if len(self._waypoints) == 1:
-                    self._finish_playback()
+                    self._finish_playback('Playback complete — returning to TELEOP.')
                 else:
                     self._wp_index = 1
                     self._set_mode(Mode.KINEMATIC_VELOCTIY_BASE_FRAME)
                     self._state = _State.PLAYBACK
-                    self.get_logger().info(
-                        f'Reached wp0. Streaming through '
-                        f'{len(self._waypoints) - 1} remaining waypoint(s) at {self._speed} mm/s...'
+                    self._println(
+                        f'  wp 0 reached — streaming {len(self._waypoints) - 1} '
+                        f'remaining waypoint(s) at {self._speed:.0f} mm/s'
                     )
 
         elif self._state == _State.PLAYBACK:
@@ -135,14 +159,15 @@ class TeachAndPlayNode(Node):
                 return
             target = self._waypoints[self._wp_index]
             dist = self._xyz_dist(self._pos, target)
-            self.get_logger().info(f'[→ wp{self._wp_index}]  dist: {dist:.1f} mm')
+            total = len(self._waypoints)
+            self._print_inline(f'  wp {self._wp_index}/{total - 1}  —  {dist:.1f} mm remaining')
             if dist < self._tol:
                 self._wp_index += 1
-                if self._wp_index >= len(self._waypoints):
-                    self._finish_playback()
+                if self._wp_index >= total:
+                    self._finish_playback('Playback complete — returning to TELEOP.')
                     return
+                self._println(f'  wp {self._wp_index - 1} reached — advancing to wp {self._wp_index}')
                 target = self._waypoints[self._wp_index]
-                self.get_logger().info(f'Advancing to wp{self._wp_index}')
             self._stream_velocity(target)
 
     # ── commands ─────────────────────────────────────────────────────────────
@@ -196,7 +221,7 @@ class TeachAndPlayNode(Node):
         p.float_data = [vx, vy, vz] + ang_vels
         self._pub.publish(p)
 
-    def _finish_playback(self):
+    def _finish_playback(self, msg: str):
         p = Packet()
         p.device_id  = ALPHA_BASE_ID
         p.packet_id  = PacketID.INVERSE_KINEMATICS_GLOBAL_VELOCITY
@@ -204,7 +229,7 @@ class TeachAndPlayNode(Node):
         self._pub.publish(p)
         self._set_mode(Mode.POSITION_HOLD)
         self._state = _State.TELEOP
-        self.get_logger().info('Playback complete — returning to TELEOP.')
+        self._println(f'\r\n{"─" * _W}\r\n  {msg}\r\n{"─" * _W}')
 
     # ── helpers ──────────────────────────────────────────────────────────────
 
@@ -219,54 +244,51 @@ class TeachAndPlayNode(Node):
             if self._state != _State.TELEOP:
                 return
             if self._pos is None:
-                self.get_logger().warn('No position available yet — is the alpha passthrough running?')
+                self._warn('No position available yet — is the alpha passthrough running?')
                 return
             if len(self._waypoints) >= self._max_wp:
-                self.get_logger().warn(f'Maximum waypoints ({self._max_wp}) already recorded.')
+                self._warn(f'Maximum waypoints ({self._max_wp}) already recorded.')
                 return
             self._waypoints.append(list(self._pos))
             idx = len(self._waypoints) - 1
-            p = self._pos
-            self.get_logger().info(
-                f'Recorded wp{idx}: '
-                f'({p[0]:.1f}, {p[1]:.1f}, {p[2]:.1f}) mm  '
-                f'yaw={p[3]:.3f} pitch={p[4]:.3f} roll={p[5]:.3f} rad  '
-                f'[{len(self._waypoints)}/{self._max_wp}]'
+            x, y, z, yaw, pitch, roll = self._pos
+            self._println(
+                f'  [wp {idx}]  '
+                f'X {x:8.1f}  Y {y:8.1f}  Z {z:8.1f} mm'
+                f'  [{len(self._waypoints)}/{self._max_wp}]\r\n'
+                f'          '
+                f'yaw {yaw:7.3f}  pitch {pitch:7.3f}  roll {roll:7.3f} rad'
             )
 
         elif key == 'p':
             if self._state != _State.TELEOP:
                 return
             if not self._waypoints:
-                self.get_logger().warn('No waypoints recorded — press r to record positions first.')
+                self._warn('No waypoints recorded — press r to record positions first.')
                 return
             self._wp_index = 0
             self._set_mode(Mode.KINEMATIC_POSITION_BASE_FRAME)
             self._state = _State.MOVE_TO_FIRST
-            sys.stdout.write(PLAYBACK_BANNER)
+            sys.stdout.write(_PLAYBACK_BANNER)
             sys.stdout.flush()
-            self.get_logger().info(
-                f'Starting playback of {len(self._waypoints)} waypoint(s) at {self._speed} mm/s — '
-                f'moving to wp0...'
-            )
+            self._inline = False
 
         elif key == 'c':
             if self._state != _State.TELEOP:
-                self.get_logger().warn('Cannot clear waypoints during playback.')
+                self._warn('Cannot clear waypoints during playback.')
                 return
             count = len(self._waypoints)
             self._waypoints.clear()
-            self.get_logger().info(f'Cleared {count} waypoint(s).')
+            self._println(f'  Cleared {count} waypoint(s).')
 
         elif key == 'ESC':
             if self._state in (_State.MOVE_TO_FIRST, _State.PLAYBACK):
-                self.get_logger().info('Playback aborted by user — returning to TELEOP.')
-                self._finish_playback()
+                self._finish_playback('Playback aborted — returning to TELEOP.')
 
     def _keyboard_loop(self):
         fd = sys.stdin.fileno()
         if not os.isatty(fd):
-            self.get_logger().warn('stdin is not a TTY — keyboard control unavailable.')
+            self._warn('stdin is not a TTY — run with: ros2 run rs_passthrough teach_and_play')
             return
         old_settings = termios.tcgetattr(fd)
         try:
