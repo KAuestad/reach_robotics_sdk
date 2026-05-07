@@ -28,6 +28,8 @@ setup(
             'get_end_effector_pose = rs_passthrough.get_end_effector_pose:main',
             'move_ab = rs_passthrough.move_ab:main',
             'teach_and_play = rs_passthrough.teach_and_play:main',
+            'teach_and_play_tool = rs_passthrough.teach_and_play_tool:main',
+            'monitor_pose = rs_passthrough.monitor_pose:main',
         ],
     },
 )
