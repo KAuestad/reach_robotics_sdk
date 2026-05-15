@@ -14,7 +14,6 @@ def generate_launch_description():
         'alpha_port', default_value=TextSubstitution(text='/dev/ttyUSB1'),
         description='Serial port for the Alpha 5 manipulator'
     )
-
     return LaunchDescription([
         master_port_arg,
         alpha_port_arg,
@@ -28,6 +27,9 @@ def generate_launch_description():
             package='rs_passthrough',
             executable='serial_passthrough',
             namespace='alpha',
-            parameters=[{'serial_port': LaunchConfiguration('alpha_port')}],
+            parameters=[{
+                'serial_port': LaunchConfiguration('alpha_port'),
+                'half_duplex': True,
+            }],
         ),
     ])
