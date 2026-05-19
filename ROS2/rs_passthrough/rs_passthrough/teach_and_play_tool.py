@@ -71,7 +71,7 @@ class TeachAndPlayToolNode(Node):
         self.declare_parameter('speed', 10.0)
         self.declare_parameter('tolerance', 5.0)
         self.declare_parameter('max_waypoints', 10)
-        self.declare_parameter('max_angular_rate', 1.3)
+        self.declare_parameter('max_angular_rate', 0.3)
         self.declare_parameter('k_orient', 1.0)
         # Tool tip offset expressed in the gripper frame (mm).
         self.declare_parameter('tool_x', 0.0)
@@ -105,6 +105,8 @@ class TeachAndPlayToolNode(Node):
 
         self.create_timer(1.0 / LOOP_HZ, self._tick)
 
+        #self._set_velocity_limits(self._max_ang*0.001)
+        
         sys.stdout.write(_startup_banner(self._p_tool))
         sys.stdout.flush()
 
@@ -184,8 +186,16 @@ class TeachAndPlayToolNode(Node):
                 self._println(f'  wp {self._wp_index - 1} reached — advancing to wp {self._wp_index}')
                 target = self._waypoints[self._wp_index]
             self._stream_velocity(target)
-
     # ── commands ─────────────────────────────────────────────────────────────
+
+    def _set_velocity_limits(self, max_vel: float, min_vel: float = 0.0):
+        for device_id in range(0x01, 0x06):  # 0x01 to 0x05
+            p = Packet()
+            p.device_id  = device_id
+            p.packet_id  = PacketID.VELOCITY_LIMITS
+            p.float_data = [max_vel, min_vel]
+            self._pub.publish(p)
+
 
     def _request_position(self):
         p = Packet()
@@ -286,9 +296,20 @@ class TeachAndPlayToolNode(Node):
             self._p_tool,
         )
 
+
     def _tool_dist(self, pose_a: list, pose_b: list) -> float:
         """Distance between tool tip positions for two gripper poses."""
         return float(np.linalg.norm(self._tool_pos(pose_a) - self._tool_pos(pose_b)))
+
+    def _tool_dist_separate(self, pose_a: list, pose_b: list) -> tuple[float, float]:
+        """Separate translational and rotational distance between two gripper poses."""
+        
+        translation_error = np.linalg.norm(np.array(pose_a[:3]) - np.array(pose_b[:3]))
+        rotation_error = np.linalg.norm(np.array(pose_a[3:]) - np.array(pose_b[3:]))
+        return translation_error, rotation_error    
+        
+
+
 
     # ── keyboard ─────────────────────────────────────────────────────────────
 

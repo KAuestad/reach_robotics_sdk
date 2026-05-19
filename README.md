@@ -31,6 +31,20 @@ Manip Moxa: 192.168.2.75
 user: NA
 pw: Stinger67
 
+## USB-port Setup
+
+## See the name of the connected USB ports:
+
+sudo dmesg | grep tty
+
+
+### Create a new USB port with a more suitable name:
+sudo ln -sf /dev/ttyr00 /dev/ttyUSB_ALPHA5
+sudo chmod 666 /dev/ttyr00
+ls -l /dev/ttyUSB_ALPHA5
+
+
+
 ## Teach and Play
 
 Two variants are available depending on whether you want to control the speed at the **gripper flange** or at the **tip of an attached tool**:
