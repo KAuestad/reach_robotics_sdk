@@ -32,4 +32,9 @@ def generate_launch_description():
                 'half_duplex': True,
             }],
         ),
+        Node(
+            package='rs_passthrough',
+            executable='joint_telemetry',
+            namespace='alpha',
+        )
     ])

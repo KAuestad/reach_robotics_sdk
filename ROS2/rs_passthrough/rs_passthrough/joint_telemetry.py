@@ -2,6 +2,7 @@ import rclpy
 from rclpy.node import Node
 from rs_msgs.msg import Packet
 from rs_protocol import RSProtocol, PacketID
+from sensor_msgs.msg import JointState
 
 LOOP_FREQUENCY = 20  # Hz
 QUEUE_SIZE = 100
@@ -52,6 +53,7 @@ class JointTelemetry(Node):
         self.declare_parameter("~frequency", LOOP_FREQUENCY)
         self.frequency = self.get_parameter("~frequency").value
         self.tx_publisher = self.create_publisher(Packet, "tx", QUEUE_SIZE)
+        self.js_publisher = self.create_publisher(JointState, "joint_states", QUEUE_SIZE)
 
         self.actuators = []
         for device_id in range(1, 8):
@@ -66,7 +68,15 @@ class JointTelemetry(Node):
                 
     def timer_callback(self):
         self.tx_publisher.publish(self.telemetry_packet)
-        self.get_logger().info(f"q: {[round(actuator.state.q, 1) for actuator in self.actuators]}, |q̇|: {[abs(round(actuator.state.dq, 1)) for actuator in self.actuators]}")
+        #self.get_logger().info(f"q: {[round(actuator.state.q, 1) for actuator in self.actuators]}, |q̇|: {[abs(round(actuator.state.dq, 1)) for actuator in self.actuators]}")
+
+        js = JointState()
+        js.header.stamp = self.get_clock().now().to_msg()
+        js.name = [f"joint_{a.device_id}" for a in self.actuators]
+        js.position = [a.state.q for a in self.actuators]
+        js.velocity = [a.state.dq for a in self.actuators]
+        js.effort = [a.state.Iq for a in self.actuators]
+        self.js_publisher.publish(js)
 
 def main(args=None):
     rclpy.init(args=args)

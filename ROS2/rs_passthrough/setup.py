@@ -29,6 +29,7 @@ setup(
             'move_ab = rs_passthrough.move_ab:main',
             'teach_and_play = rs_passthrough.teach_and_play:main',
             'teach_and_play_tool = rs_passthrough.teach_and_play_tool:main',
+            'teach_and_play_joints = rs_passthrough.teach_and_play_joints:main',
             'monitor_pose = rs_passthrough.monitor_pose:main',
         ],
     },
