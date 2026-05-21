@@ -47,14 +47,15 @@ ls -l /dev/ttyUSB_ALPHA5
 
 ## Teach and Play
 
-Two variants are available depending on whether you want to control the speed at the **gripper flange** or at the **tip of an attached tool**:
+Three variants are available:
 
-| Node | Speed reference |
-|------|----------------|
-| `teach_and_play` | Gripper flange (no tool offset) |
-| `teach_and_play_tool` | Tool tip (requires tool offset) |
+| Node | Control space | Speed unit |
+|------|--------------|-----------|
+| `teach_and_play` | Cartesian — gripper flange | mm/s |
+| `teach_and_play_tool` | Cartesian — tool tip | mm/s |
+| `teach_and_play_joints` | Joint space | rad/s |
 
-Both nodes share the same keyboard controls and workflow. The sections below describe each variant.
+All nodes share the same keyboard controls and workflow. The sections below describe each variant.
 
 ### Prerequisites
 
@@ -83,6 +84,11 @@ ros2 run rs_passthrough teach_and_play
 source install/setup.bash
 ros2 run rs_passthrough teach_and_play_tool --ros-args \
   -p tool_x:=120.0 -p tool_y:=0.0 -p tool_z:=0.0
+
+# Joint-space control (see "Joint-Space Variant" below)
+source install/setup.bash
+ros2 run rs_passthrough teach_and_play_joints --ros-args \
+  -p max_speed:=0.3 -p tolerance:=0.02
 ```
 
 Replace `/dev/ttyUSB0` and `/dev/ttyUSB1` with the serial ports for your hardware.
@@ -200,9 +206,61 @@ The angular correction rate is automatically scaled so its lever-arm contributio
 
 ---
 
+---
+
+### Joint-space variant (`teach_and_play_joints`)
+
+The `teach_and_play_joints` node records and replays **individual joint angles** read from the `/alpha/joint_states` topic. During playback each joint is commanded directly by position using the hardware's built-in position controller. This is the most repeatable mode for precise point-to-point motion.
+
+The `teach_and_play.launch.py` file already starts the `joint_telemetry` node in the `alpha` namespace, which publishes `/alpha/joint_states` at 20 Hz. No additional setup is required.
+
+#### Velocity limiting
+
+Joint speed is limited **only during playback**. When playback starts the node sends `VELOCITY_LIMITS` packets to each joint capping motion at `max_speed`. When playback ends (complete or ESC) the limits are restored to an effectively uncapped value (1000 rad/s) so teleop is unaffected.
+
+#### Parameters
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `max_speed` | `1.0` | Maximum joint velocity during playback (rad/s) |
+| `tolerance` | `0.05` | Max joint error to consider a waypoint reached (rad) |
+| `max_waypoints` | `10` | Maximum number of waypoints that can be recorded |
+| `num_joints` | `5` | Number of joints to control (5 for Alpha 5, 7 for Bravo 7) |
+
+Example:
+
+```bash
+ros2 run rs_passthrough teach_and_play_joints --ros-args \
+  -p max_speed:=0.3 -p tolerance:=0.02 -p num_joints:=5
+```
+
+The startup banner confirms the configured speed:
+
+```
+────────────────────────────────────────────────────────
+  Teach and Play (joint space)  —  TELEOP
+────────────────────────────────────────────────────────
+  r    record current joint positions
+  p    start playback
+  c    clear all waypoints
+  ESC  abort playback
+────────────────────────────────────────────────────────
+  Max joint speed: 0.30 rad/s
+────────────────────────────────────────────────────────
+```
+
+When you press `r` to record a waypoint, all joint angles are printed in radians:
+
+```
+  [wp 0]  j1  0.0000  j2 -0.7854  j3  1.5708  j4  0.0000  j5  0.0000  [1/10]
+```
+
+---
+
 ### Notes
 
-- Waypoints store the full 6-DOF pose (XYZ + yaw/pitch/roll). Orientation is tracked during playback using proportional control toward the recorded orientation at each waypoint.
+- `teach_and_play` and `teach_and_play_tool` waypoints store a full 6-DOF Cartesian pose (XYZ + yaw/pitch/roll). Orientation is tracked during playback using proportional control.
+- `teach_and_play_joints` waypoints store one angle per joint in radians.
 - Waypoints are held in memory only. They are lost when the node is shut down.
 - The master arm is fully ignored while playback is active.
 
