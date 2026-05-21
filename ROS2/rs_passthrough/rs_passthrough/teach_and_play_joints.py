@@ -61,10 +61,12 @@ class TeachAndPlayJointsNode(Node):
         self.declare_parameter('tolerance', 0.05)
         self.declare_parameter('max_waypoints', 10)
         self.declare_parameter('num_joints', 5)
+        self.declare_parameter('max_speed', 1.0)
 
-        self._tol      = self.get_parameter('tolerance').value
-        self._max_wp   = self.get_parameter('max_waypoints').value
-        self._n        = self.get_parameter('num_joints').value
+        self._tol       = self.get_parameter('tolerance').value
+        self._max_wp    = self.get_parameter('max_waypoints').value
+        self._n         = self.get_parameter('num_joints').value
+        self._max_speed = self.get_parameter('max_speed').value
 
         self._pub = self.create_publisher(Packet, '/alpha/tx', QUEUE_SIZE)
         self.create_subscription(Packet,     '/master/rx',         self._on_master,       QUEUE_SIZE)
@@ -83,6 +85,7 @@ class TeachAndPlayJointsNode(Node):
         self.create_timer(1.0 / LOOP_HZ, self._tick)
 
         sys.stdout.write(_STARTUP_BANNER)
+        sys.stdout.write(f'  Max joint speed: {self._max_speed:.2f} rad/s\r\n{"─" * _W}\r\n')
         sys.stdout.flush()
 
     # ── output helpers ───────────────────────────────────────────────────────
@@ -138,6 +141,15 @@ class TeachAndPlayJointsNode(Node):
 
     # ── commands ─────────────────────────────────────────────────────────────
 
+    def _set_velocity_limits(self, max_vel: float):
+        for device_id in range(1, self._n + 1):
+            p = Packet()
+            p.device_id  = device_id
+            p.packet_id  = PacketID.VELOCITY_LIMITS
+            p.float_data = [max_vel, -max_vel]
+            self._println(f'  Set velocity limits for joint_{device_id}: max {max_vel:.2f} rad/s, min {p.float_data[1]:.2f} rad/s')
+            self._pub.publish(p)
+
     def _set_mode(self, mode: int):
         p = Packet()
         p.device_id = 0xFF
@@ -154,6 +166,7 @@ class TeachAndPlayJointsNode(Node):
             self._pub.publish(p)
 
     def _finish_playback(self, msg: str):
+        self._set_velocity_limits(1000.0)
         self._set_mode(Mode.POSITION_HOLD)
         self._state = _State.TELEOP
         self._println(f'\r\n{"─" * _W}\r\n  {msg}\r\n{"─" * _W}')
@@ -182,6 +195,7 @@ class TeachAndPlayJointsNode(Node):
                 self._warn('No waypoints recorded — press r to record positions first.')
                 return
             self._wp_index = 0
+            self._set_velocity_limits(self._max_speed)
             self._set_mode(Mode.POSITION)
             self._state = _State.PLAYBACK
             sys.stdout.write(_PLAYBACK_BANNER)
