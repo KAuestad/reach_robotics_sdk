@@ -126,11 +126,12 @@ class TeachAndPlayJointsNode(Node):
             return
 
         target = self._waypoints[self._wp_index]
-        self._send_joint_positions(target)
+        velocities = self._apply_relative_velocity_limits(self._joints, target)
 
         error = max(abs(target[i] - self._joints[i]) for i in range(self._n))
         total = len(self._waypoints)
-        self._print_inline(f'  wp {self._wp_index}/{total - 1}  —  max err {error:.4f} rad')
+        vel_str = ' '.join(f'j{i+1}:{v:+.2f}' for i, v in enumerate(velocities))
+        self._print_inline(f'  wp {self._wp_index}/{total - 1}  err {error:.4f} rad  [{vel_str}]')
 
         if error < self._tol:
             self._wp_index += 1
@@ -139,15 +140,35 @@ class TeachAndPlayJointsNode(Node):
                 return
             self._println(f'  wp {self._wp_index - 1} reached — advancing to wp {self._wp_index}')
 
-    # ── commands ─────────────────────────────────────────────────────────────
+    # ── commands ────────────────────────────────────────────────────────────
+    def _calc_relative_velocity(self, current: list, target: list) -> list:
+        # Signed deltas so the velocity direction is correct.
+        deltas = [target[i] - current[i] for i in range(self._n)]
+        max_delta = max(abs(d) for d in deltas)
+        if max_delta < 1e-6:
+            return [0.0] * self._n
+        return [self._max_speed * d / max_delta for d in deltas]
+
+    def _apply_relative_velocity_limits(self, current: list, target: list):
+        # Stream signed joint velocity commands so all joints finish simultaneously.
+        # VELOCITY_LIMITS in POSITION mode does not constrain the hardware's internal
+        # motion profiler — velocity streaming is the only way to achieve synchronised arrival.
+        velocities = self._calc_relative_velocity(current, target)
+        for i, vel in enumerate(velocities):
+            p = Packet()
+            p.device_id  = i + 1
+            p.packet_id  = PacketID.VELOCITY
+            p.float_data = [vel]
+            self._pub.publish(p)
+        return velocities
 
     def _set_velocity_limits(self, max_vel: float):
-        for device_id in range(1, self._n + 1):
+        # Safety cap — prevents runaway if velocity streaming overshoots.
+        for i in range(self._n):
             p = Packet()
-            p.device_id  = device_id
+            p.device_id  = i + 1
             p.packet_id  = PacketID.VELOCITY_LIMITS
             p.float_data = [max_vel, -max_vel]
-            self._println(f'  Set velocity limits for joint_{device_id}: max {max_vel:.2f} rad/s, min {p.float_data[1]:.2f} rad/s')
             self._pub.publish(p)
 
     def _set_mode(self, mode: int):
@@ -157,15 +178,13 @@ class TeachAndPlayJointsNode(Node):
         p.int_data  = [mode]
         self._pub.publish(p)
 
-    def _send_joint_positions(self, positions: list):
-        for i, angle in enumerate(positions):
-            p = Packet()
-            p.device_id  = i + 1          # joint_1 → device_id 0x01, etc.
-            p.packet_id  = PacketID.POSITION
-            p.float_data = [angle]
-            self._pub.publish(p)
-
     def _finish_playback(self, msg: str):
+        for i in range(self._n):
+            p = Packet()
+            p.device_id  = i + 1
+            p.packet_id  = PacketID.VELOCITY
+            p.float_data = [0.0]
+            self._pub.publish(p)
         self._set_velocity_limits(1000.0)
         self._set_mode(Mode.POSITION_HOLD)
         self._state = _State.TELEOP
@@ -196,7 +215,7 @@ class TeachAndPlayJointsNode(Node):
                 return
             self._wp_index = 0
             self._set_velocity_limits(self._max_speed)
-            self._set_mode(Mode.POSITION)
+            self._set_mode(Mode.VELOCITY)
             self._state = _State.PLAYBACK
             sys.stdout.write(_PLAYBACK_BANNER)
             sys.stdout.flush()
