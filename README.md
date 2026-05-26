@@ -108,8 +108,8 @@ Replace `/dev/ttyUSB0` and `/dev/ttyUSB1` with the serial ports for your hardwar
 1. **Teleoperate** the arm to the desired positions using the master arm.
 2. **Press `r`** at each position you want to save. The terminal confirms each recorded waypoint with its index, XYZ position (mm), and orientation (rad). Up to 10 waypoints can be recorded.
 3. **Press `p`** to start playback. The node prints a banner, disables master arm input, and begins executing the sequence:
-   - The arm moves to the first waypoint under position control.
-   - Once within 5 mm, it switches to velocity streaming and traverses all remaining waypoints at a steady speed without stopping between them.
+   - For `teach_and_play` and `teach_and_play_tool`: the arm moves to the first waypoint under position control, then streams Cartesian velocity through all remaining waypoints at a constant speed.
+   - For `teach_and_play_joints`: the arm streams per-joint velocity commands through all waypoints, with velocities scaled each tick so all joints arrive simultaneously.
    - On completion the arm holds its final position and teleoperation resumes automatically.
 4. **Press `ESC`** at any time during playback to stop immediately, hold position, and return to teleoperation.
 5. **Press `c`** to clear all waypoints and start a new recording session.
@@ -210,13 +210,21 @@ The angular correction rate is automatically scaled so its lever-arm contributio
 
 ### Joint-space variant (`teach_and_play_joints`)
 
-The `teach_and_play_joints` node records and replays **individual joint angles** read from the `/alpha/joint_states` topic. During playback each joint is commanded directly by position using the hardware's built-in position controller. This is the most repeatable mode for precise point-to-point motion.
+The `teach_and_play_joints` node records and replays **individual joint angles** read from the `/alpha/joint_states` topic. During playback the node streams per-joint velocity commands so that all joints arrive at each waypoint simultaneously.
 
 The `teach_and_play.launch.py` file already starts the `joint_telemetry` node in the `alpha` namespace, which publishes `/alpha/joint_states` at 20 Hz. No additional setup is required.
 
-#### Velocity limiting
+#### Synchronized motion
 
-Joint speed is limited **only during playback**. When playback starts the node sends `VELOCITY_LIMITS` packets to each joint capping motion at `max_speed`. When playback ends (complete or ESC) the limits are restored to an effectively uncapped value (1000 rad/s) so teleop is unaffected.
+Playback uses `Mode.VELOCITY` (joint velocity streaming) rather than `Mode.POSITION`. At every 20 Hz tick the node:
+
+1. Computes the remaining angular distance to the target for each joint.
+2. Scales velocities so the joint with the largest remaining travel moves at `max_speed` and all others move proportionally slower — guaranteeing simultaneous arrival.
+3. Recomputes the proportions from live joint state every tick, so the synchronisation self-corrects for any tracking error.
+
+`VELOCITY_LIMITS` is set to `max_speed` at playback start as a hardware safety cap only — it does **not** drive the synchronisation (the hardware's internal position controller ignores `VELOCITY_LIMITS`, which is why velocity streaming is used instead).
+
+On completion or ESC, zero-velocity commands are sent to all joints before switching to `POSITION_HOLD`.
 
 #### Parameters
 
