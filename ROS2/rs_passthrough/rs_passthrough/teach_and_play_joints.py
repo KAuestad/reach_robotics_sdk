@@ -1,3 +1,4 @@
+import math
 import os
 import select
 import signal
@@ -7,6 +8,7 @@ import threading
 import tty
 
 import rclpy
+from geometry_msgs.msg import TwistStamped
 from rclpy.node import Node
 from rs_msgs.msg import Packet
 from rs_protocol import PacketID, Mode
@@ -69,14 +71,16 @@ class TeachAndPlayJointsNode(Node):
         self._max_speed = self.get_parameter('max_speed').value
 
         self._pub = self.create_publisher(Packet, '/alpha/tx', QUEUE_SIZE)
-        self.create_subscription(Packet,     '/master/rx',         self._on_master,       QUEUE_SIZE)
-        self.create_subscription(JointState, '/alpha/joint_states', self._on_joint_states, QUEUE_SIZE)
+        self.create_subscription(Packet,      '/master/rx',          self._on_master,       QUEUE_SIZE)
+        self.create_subscription(JointState,  '/alpha/joint_states', self._on_joint_states, QUEUE_SIZE)
+        self.create_subscription(TwistStamped,'/alpha/tool_twist',   self._on_tool_twist,   QUEUE_SIZE)
 
-        self._state     = _State.TELEOP
-        self._joints    = None   # list[float] len == self._n, radians
-        self._waypoints = []
-        self._wp_index  = 0
-        self._inline    = False
+        self._state      = _State.TELEOP
+        self._joints     = None   # list[float] len == self._n, radians
+        self._tool_speed = None   # mm/s, from /alpha/tool_twist
+        self._waypoints  = []
+        self._wp_index   = 0
+        self._inline     = False
 
         self._running   = True
         self._kb_thread = threading.Thread(target=self._keyboard_loop, daemon=True)
@@ -110,6 +114,10 @@ class TeachAndPlayJointsNode(Node):
         pos = dict(zip(msg.name, msg.position))
         self._joints = [pos.get(f'joint_{i}', 0.0) for i in range(1, self._n + 1)]
 
+    def _on_tool_twist(self, msg: TwistStamped):
+        v = msg.twist.linear
+        self._tool_speed = math.sqrt(v.x**2 + v.y**2 + v.z**2) * 1000.0  # m/s → mm/s
+
     def _on_master(self, packet: Packet):
         if self._state != _State.TELEOP:
             return
@@ -120,8 +128,16 @@ class TeachAndPlayJointsNode(Node):
     # ── timer ────────────────────────────────────────────────────────────────
 
     def _tick(self):
-        if self._state != _State.PLAYBACK:
+        speed_str = (
+            f'  |  tool: {self._tool_speed:6.1f} mm/s'
+            if self._tool_speed is not None else
+            '  |  tool:   --.- mm/s'
+        )
+
+        if self._state == _State.TELEOP:
+            self._print_inline(f'  Max joint speed: {self._max_speed:.2f} rad/s{speed_str}')
             return
+
         if self._joints is None:
             return
 
@@ -131,7 +147,7 @@ class TeachAndPlayJointsNode(Node):
         error = max(abs(target[i] - self._joints[i]) for i in range(self._n))
         total = len(self._waypoints)
         vel_str = ' '.join(f'j{i+1}:{v:+.2f}' for i, v in enumerate(velocities))
-        self._print_inline(f'  wp {self._wp_index}/{total - 1}  err {error:.4f} rad  [{vel_str}]')
+        self._print_inline(f'  wp {self._wp_index}/{total - 1}  err {error:.4f} rad  [{vel_str}]{speed_str}')
 
         if error < self._tol:
             self._wp_index += 1

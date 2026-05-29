@@ -36,5 +36,14 @@ def generate_launch_description():
             package='rs_passthrough',
             executable='joint_telemetry',
             namespace='alpha',
-        )
+        ),
+        Node(
+            package='rs_passthrough',
+            executable='monitor_pose',
+            parameters=[{
+                'tool_x': 0.0,
+                'tool_y': 0.0,
+                'tool_z': 120.0,
+            }],
+        ),
     ])
