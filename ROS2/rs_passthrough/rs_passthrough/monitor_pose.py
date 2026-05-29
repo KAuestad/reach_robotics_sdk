@@ -15,6 +15,7 @@ ALPHA_BASE_ID = 0x05
 QUEUE_SIZE = 10
 LOOP_HZ = 10
 _W = 76
+_SPEED_LIMIT = 100.0  # mm/s — samples above this are discarded as differentiation artefacts
 
 
 class PoseMonitorNode(Node):
@@ -37,11 +38,11 @@ class PoseMonitorNode(Node):
         self._twist_pub = self.create_publisher(TwistStamped,'/alpha/tool_twist', QUEUE_SIZE)
         self.create_subscription(Packet, '/alpha/rx', self._on_alpha, QUEUE_SIZE)
 
-        self._pos        = None
-        self._prev_pos   = None
-        self._prev_time  = None
-        self._vel_buffer = collections.deque(maxlen=5)
-        self._first      = True
+        self._pos            = None   # latest gripper pose [x,y,z,yaw,pitch,roll]
+        self._pos_time       = None   # wall time (s) when _pos was last updated
+        self._omega_cart     = np.zeros(3)  # latest angular velocity, Cartesian
+        self._vel_buffer     = collections.deque(maxlen=5)  # accepted v_tool samples
+        self._first          = True
 
         self.create_timer(1.0 / LOOP_HZ, self._tick)
 
@@ -61,7 +62,30 @@ class PoseMonitorNode(Node):
             return
         if len(packet.float_data) < 6:
             return
-        self._pos = list(packet.float_data[:6])
+
+        now     = self.get_clock().now().nanoseconds * 1e-9
+        new_pos = list(packet.float_data[:6])
+
+        # Compute velocity using the actual inter-packet interval as dt.
+        # This avoids the timing error that occurs when differentiation is done
+        # at display-tick time (tick period ≠ measurement interval).
+        if self._pos is not None and self._pos_time is not None:
+            dt = now - self._pos_time
+            if dt > 1e-6:
+                cur = np.array(new_pos)
+                prv = np.array(self._pos)
+                v_gripper = (cur[:3] - prv[:3]) / dt
+                # Packet order: [yaw, pitch, roll] → Cartesian [X, Y, Z] = reversed
+                self._omega_cart = (cur[3:] - prv[3:])[::-1] / dt
+                v_raw = tool_velocity_from_gripper_pose_and_vel(
+                    new_pos[:3], new_pos[3], new_pos[4], new_pos[5],
+                    self._p_tool, v_gripper, self._omega_cart,
+                )
+                if np.linalg.norm(v_raw) <= _SPEED_LIMIT:
+                    self._vel_buffer.append(v_raw)
+
+        self._pos      = new_pos
+        self._pos_time = now
 
     def _tick(self):
         self._request_position()
@@ -88,27 +112,8 @@ class PoseMonitorNode(Node):
         )
 
     def _display(self):
-        now = self.get_clock().now().nanoseconds * 1e-9
-
-        # Numerical differentiation: v_tool = v_gripper + omega × (R @ p_tool)
-        omega_cartesian = np.zeros(3)
-        if self._prev_pos is not None and self._prev_time is not None:
-            dt = now - self._prev_time
-            if dt > 1e-6:
-                cur = np.array(self._pos)
-                prv = np.array(self._prev_pos)
-                v_gripper = (cur[:3] - prv[:3]) / dt
-                # Packet order: [yaw, pitch, roll] → Cartesian [X, Y, Z] = reversed
-                omega_cartesian = (cur[3:] - prv[3:])[::-1] / dt
-                v_raw = tool_velocity_from_gripper_pose_and_vel(
-                    self._pos[:3], self._pos[3], self._pos[4], self._pos[5],
-                    self._p_tool, v_gripper, omega_cartesian,
-                )
-                if np.linalg.norm(v_raw) <= 100.0:
-                    self._vel_buffer.append(v_raw)
-
-        self._prev_pos  = list(self._pos)
-        self._prev_time = now
+        g = self._pos
+        t = tool_position_from_gripper_pose(g[:3], g[3], g[4], g[5], self._p_tool)
 
         if self._vel_buffer:
             v_tool     = np.mean(self._vel_buffer, axis=0)
@@ -116,9 +121,6 @@ class PoseMonitorNode(Node):
         else:
             v_tool     = None
             tool_speed = None
-
-        g = self._pos
-        t = tool_position_from_gripper_pose(g[:3], g[3], g[4], g[5], self._p_tool)
 
         # ── publish pose and twist ────────────────────────────────────────────
         stamp = self.get_clock().now().to_msg()
@@ -143,9 +145,9 @@ class PoseMonitorNode(Node):
             twist_msg.twist.linear.x  = v_tool[0] / 1000.0
             twist_msg.twist.linear.y  = v_tool[1] / 1000.0
             twist_msg.twist.linear.z  = v_tool[2] / 1000.0
-            twist_msg.twist.angular.x = omega_cartesian[0]
-            twist_msg.twist.angular.y = omega_cartesian[1]
-            twist_msg.twist.angular.z = omega_cartesian[2]
+            twist_msg.twist.angular.x = self._omega_cart[0]
+            twist_msg.twist.angular.y = self._omega_cart[1]
+            twist_msg.twist.angular.z = self._omega_cart[2]
         self._twist_pub.publish(twist_msg)
 
         # ── terminal display ──────────────────────────────────────────────────
