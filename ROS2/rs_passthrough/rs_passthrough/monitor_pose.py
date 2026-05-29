@@ -6,7 +6,7 @@ from rclpy.node import Node
 from rs_msgs.msg import Packet
 from rs_protocol import PacketID
 
-from .tool_pose_and_vel import tool_position_from_gripper_pose
+from .tool_pose_and_vel import tool_position_from_gripper_pose, tool_velocity_from_gripper_pose_and_vel
 
 ALPHA_BASE_ID = 0x05
 QUEUE_SIZE = 10
@@ -32,8 +32,10 @@ class PoseMonitorNode(Node):
         self._pub = self.create_publisher(Packet, '/alpha/tx', QUEUE_SIZE)
         self.create_subscription(Packet, '/alpha/rx', self._on_alpha, QUEUE_SIZE)
 
-        self._pos   = None
-        self._first = True
+        self._pos       = None
+        self._prev_pos  = None
+        self._prev_time = None
+        self._first     = True
 
         self.create_timer(1.0 / LOOP_HZ, self._tick)
 
@@ -59,6 +61,9 @@ class PoseMonitorNode(Node):
         self._request_position()
         if self._pos is not None:
             self._display()
+        else:
+            sys.stdout.write('\rWaiting for gripper pose...\r')
+            sys.stdout.flush()
 
     def _request_position(self):
         p = Packet()
@@ -68,8 +73,39 @@ class PoseMonitorNode(Node):
         self._pub.publish(p)
 
     def _display(self):
+        sys.stdout.write('hei')  # debug
+        now = self.get_clock().now().nanoseconds * 1e-9
+
+        # Numerical differentiation: v_tool = v_gripper + omega × (R @ p_tool)
+        tool_speed = None
+        v_tool = None
+        if self._prev_pos is not None and self._prev_time is not None:
+            dt = now - self._prev_time
+            if dt > 1e-6:
+                cur = np.array(self._pos)
+                prv = np.array(self._prev_pos)
+                v_gripper = (cur[:3] - prv[:3]) / dt
+                # Packet order: [yaw, pitch, roll] → Cartesian [X, Y, Z] = reversed
+                omega_cartesian = (cur[3:] - prv[3:])[::-1] / dt
+                v_tool = tool_velocity_from_gripper_pose_and_vel(
+                    self._pos[:3], self._pos[3], self._pos[4], self._pos[5],
+                    self._p_tool, v_gripper, omega_cartesian,
+                )
+                tool_speed = float(np.linalg.norm(v_tool))
+
+        self._prev_pos  = list(self._pos)
+        self._prev_time = now
+
         g = self._pos
         t = tool_position_from_gripper_pose(g[:3], g[3], g[4], g[5], self._p_tool)
+
+        if tool_speed is not None:
+            speed_line = (
+                f'  Speed    {tool_speed:6.1f} mm/s'
+                f'   vx {v_tool[0]:6.1f}  vy {v_tool[1]:6.1f}  vz {v_tool[2]:6.1f} mm/s'
+            )
+        else:
+            speed_line = f'  Speed    {"--.-":>6} mm/s'
 
         lines = [
             f'  Gripper  '
@@ -77,6 +113,7 @@ class PoseMonitorNode(Node):
             f'   yaw {g[3]:7.3f}  pitch {g[4]:7.3f}  roll {g[5]:7.3f} rad',
             f'  Tool     '
             f'X {t[0]:8.1f}  Y {t[1]:8.1f}  Z {t[2]:8.1f} mm',
+            speed_line,
         ]
 
         if self._first:
