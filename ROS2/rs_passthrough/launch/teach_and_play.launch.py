@@ -21,7 +21,9 @@ def generate_launch_description():
             package='rs_passthrough',
             executable='serial_passthrough',
             namespace='master',
-            parameters=[{'serial_port': LaunchConfiguration('master_port')}],
+            parameters=[{'serial_port': LaunchConfiguration('master_port'),
+                         'half_duplex': True,
+            }],
         ),
         Node(
             package='rs_passthrough',
