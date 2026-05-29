@@ -1,3 +1,4 @@
+import collections
 import math
 import sys
 
@@ -36,10 +37,11 @@ class PoseMonitorNode(Node):
         self._twist_pub = self.create_publisher(TwistStamped,'/alpha/tool_twist', QUEUE_SIZE)
         self.create_subscription(Packet, '/alpha/rx', self._on_alpha, QUEUE_SIZE)
 
-        self._pos       = None
-        self._prev_pos  = None
-        self._prev_time = None
-        self._first     = True
+        self._pos        = None
+        self._prev_pos   = None
+        self._prev_time  = None
+        self._vel_buffer = collections.deque(maxlen=5)
+        self._first      = True
 
         self.create_timer(1.0 / LOOP_HZ, self._tick)
 
@@ -89,8 +91,6 @@ class PoseMonitorNode(Node):
         now = self.get_clock().now().nanoseconds * 1e-9
 
         # Numerical differentiation: v_tool = v_gripper + omega × (R @ p_tool)
-        tool_speed     = None
-        v_tool         = None
         omega_cartesian = np.zeros(3)
         if self._prev_pos is not None and self._prev_time is not None:
             dt = now - self._prev_time
@@ -100,14 +100,22 @@ class PoseMonitorNode(Node):
                 v_gripper = (cur[:3] - prv[:3]) / dt
                 # Packet order: [yaw, pitch, roll] → Cartesian [X, Y, Z] = reversed
                 omega_cartesian = (cur[3:] - prv[3:])[::-1] / dt
-                v_tool = tool_velocity_from_gripper_pose_and_vel(
+                v_raw = tool_velocity_from_gripper_pose_and_vel(
                     self._pos[:3], self._pos[3], self._pos[4], self._pos[5],
                     self._p_tool, v_gripper, omega_cartesian,
                 )
-                tool_speed = float(np.linalg.norm(v_tool))
+                if np.linalg.norm(v_raw) <= 100.0:
+                    self._vel_buffer.append(v_raw)
 
         self._prev_pos  = list(self._pos)
         self._prev_time = now
+
+        if self._vel_buffer:
+            v_tool     = np.mean(self._vel_buffer, axis=0)
+            tool_speed = float(np.linalg.norm(v_tool))
+        else:
+            v_tool     = None
+            tool_speed = None
 
         g = self._pos
         t = tool_position_from_gripper_pose(g[:3], g[3], g[4], g[5], self._p_tool)
