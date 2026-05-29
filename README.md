@@ -64,7 +64,7 @@ All nodes share the same keyboard controls and workflow. The sections below desc
 
 ### Starting up
 
-**Terminal 1** — start the serial passthroughs:
+**Terminal 1** — start the serial passthroughs, joint telemetry, and pose monitor:
 
 ```bash
 source install/setup.bash
@@ -72,6 +72,8 @@ ros2 launch rs_passthrough teach_and_play.launch.py \
   master_port:=/dev/ttyUSB0 \
   alpha_port:=/dev/ttyUSB_ALPHA5
 ```
+
+This also starts `monitor_pose` automatically with a default tool offset of `tool_z=120.0 mm`. See the [Pose Monitor](#pose-monitor) section to change the offset.
 
 **Terminal 2** — start the teach and play node (choose one):
 
@@ -257,6 +259,20 @@ The startup banner confirms the configured speed:
 ────────────────────────────────────────────────────────
 ```
 
+After the banner, the bottom line updates live at 20 Hz showing the current max joint speed and live tool tip speed (sourced from `monitor_pose` via `/alpha/tool_twist`):
+
+```
+  Max joint speed: 0.30 rad/s  |  tool:   45.3 mm/s
+```
+
+During playback the same speed is appended to the waypoint progress line:
+
+```
+  wp 1/3  err 0.0123 rad  [j1:+0.30 j2:+0.12 ...]  |  tool:   45.3 mm/s
+```
+
+`monitor_pose` must be running for the tool speed to appear. If it is not running, `--.-` is shown. When started via `teach_and_play.launch.py`, `monitor_pose` runs automatically.
+
 When you press `r` to record a waypoint, all joint angles are printed in radians:
 
 ```
@@ -276,25 +292,45 @@ When you press `r` to record a waypoint, all joint angles are printed in radians
 
 ## Pose Monitor
 
-The `monitor_pose` node continuously displays the current gripper flange position and the tool-tip position side by side in the terminal, updated in place at 10 Hz.
+The `monitor_pose` node continuously displays the current gripper flange pose, tool-tip position, and tool-tip speed in the terminal, updated in place at 10 Hz. It also publishes the tool-tip state on two ROS topics consumed by other nodes.
+
+### Published topics
+
+| Topic | Type | Description |
+|-------|------|-------------|
+| `/alpha/tool_pose` | `geometry_msgs/PoseStamped` | Tool-tip position (m) and gripper orientation (quaternion) in the base frame |
+| `/alpha/tool_twist` | `geometry_msgs/TwistStamped` | Tool-tip linear velocity (m/s) and angular velocity (rad/s) in the base frame |
+
+### Running
+
+`monitor_pose` is started automatically by `teach_and_play.launch.py` with a default tool offset of `tool_z=120.0 mm`. To change the offset, edit the parameters in the launch file or run the node manually:
 
 ```bash
 source install/setup.bash
 ros2 run rs_passthrough monitor_pose --ros-args \
-  -p tool_x:=120.0 -p tool_y:=0.0 -p tool_z:=0.0
+  -p tool_x:=0.0 -p tool_y:=0.0 -p tool_z:=120.0
 ```
 
-Example output:
+### Parameters
+
+| Parameter | Default (launch file) | Description |
+|-----------|-----------------------|-------------|
+| `tool_x` | `0.0` | Tool tip X offset in the gripper frame (mm) |
+| `tool_y` | `0.0` | Tool tip Y offset in the gripper frame (mm) |
+| `tool_z` | `120.0` | Tool tip Z offset in the gripper frame (mm) |
+
+### Example output
 
 ```
 ────────────────────────────────────────────────────────────────────────────
-  Pose Monitor   tool offset: X 120.0  Y 0.0  Z 0.0 mm
+  Pose Monitor   tool offset: X 0.0  Y 0.0  Z 120.0 mm
 ────────────────────────────────────────────────────────────────────────────
   Gripper  X   200.3  Y    49.8  Z   100.1 mm   yaw   0.002  pitch  -0.001  roll   0.000 rad
-  Tool     X   320.2  Y    49.8  Z   100.1 mm
+  Tool     X   200.3  Y    49.8  Z   220.1 mm
+  Speed      45.3 mm/s   vx   12.1  vy    3.4  vz   43.1 mm/s
 ```
 
-Set `tool_x`, `tool_y`, `tool_z` to the same values used with `teach_and_play_tool`. If no tool is attached, omit the parameters (defaults to zero offset, so Tool and Gripper positions will match).
+Set `tool_x`, `tool_y`, `tool_z` to the same values used with `teach_and_play_tool`. If no tool is attached, set all offsets to zero (Tool and Gripper positions will match).
 
 ## Documentation
 
