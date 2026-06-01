@@ -81,6 +81,8 @@ class TeachAndPlayJointsNode(Node):
         self._waypoints  = []
         self._wp_index   = 0
         self._inline     = False
+        self._wp_speed = []
+        self.avg_wp_speed = 0.0
 
         self._running   = True
         self._kb_thread = threading.Thread(target=self._keyboard_loop, daemon=True)
@@ -117,7 +119,8 @@ class TeachAndPlayJointsNode(Node):
     def _on_tool_twist(self, msg: TwistStamped):
         v = msg.twist.linear
         self._tool_speed = math.sqrt(v.x**2 + v.y**2 + v.z**2) * 1000.0  # m/s → mm/s
-
+        self._wp_speed.append(self._tool_speed)
+        
     def _on_master(self, packet: Packet):
         if self._state != _State.TELEOP:
             return
@@ -151,10 +154,12 @@ class TeachAndPlayJointsNode(Node):
 
         if error < self._tol:
             self._wp_index += 1
+            self.avg_wp_speed = sum(self._wp_speed) / len(self._wp_speed) if self._wp_speed else 0.0
+            self._wp_speed.clear()
             if self._wp_index >= total:
                 self._finish_playback('Playback complete — returning to TELEOP.')
                 return
-            self._println(f'  wp {self._wp_index - 1} reached — advancing to wp {self._wp_index}')
+            self._println(f'  wp {self._wp_index - 1} reached with avg speed {self.avg_wp_speed:.1f} mm/s— advancing to wp {self._wp_index}')
 
     # ── commands ────────────────────────────────────────────────────────────
     def _calc_relative_velocity(self, current: list, target: list) -> list:
