@@ -43,9 +43,9 @@ def generate_launch_description():
             package='rs_passthrough',
             executable='monitor_pose',
             parameters=[{
-                'tool_x': 0.0,
+                'tool_x': 150.0, #290 for sandal holder
                 'tool_y': 0.0,
-                'tool_z': 120.0,
+                'tool_z': 170.0,
             }],
         ),
     ])

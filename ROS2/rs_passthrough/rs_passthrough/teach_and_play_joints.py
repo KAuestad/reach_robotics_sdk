@@ -64,7 +64,7 @@ class TeachAndPlayJointsNode(Node):
         self.declare_parameter('max_waypoints', 10)
         self.declare_parameter('num_joints', 5)
         self.declare_parameter('max_speed', 1.0)
-        self.declare_parameter('min_speed', 0.05)
+        self.declare_parameter('min_speed', 0.01)
 
         self._tol       = self.get_parameter('tolerance').value
         self._max_wp    = self.get_parameter('max_waypoints').value
@@ -153,11 +153,17 @@ class TeachAndPlayJointsNode(Node):
         if self._current_velocities is None:
             self._current_velocities = self._calc_relative_velocity(self._joints, target)
 
-        self._publish_velocities(self._current_velocities)
+        # Stop each joint once it reaches its own target so early-arriving joints
+        # hold position instead of overshooting away while slower joints finish.
+        cmd = [
+            0.0 if abs(target[i] - self._joints[i]) < self._tol else self._current_velocities[i]
+            for i in range(self._n)
+        ]
+        self._publish_velocities(cmd)
 
         error = max(abs(target[i] - self._joints[i]) for i in range(self._n))
         total = len(self._waypoints)
-        vel_str = ' '.join(f'j{i+1}:{v:+.2f}' for i, v in enumerate(self._current_velocities))
+        vel_str = ' '.join(f'j{i+1}:{v:+.2f}' for i, v in enumerate(cmd))
         self._print_inline(f'  wp {self._wp_index}/{total - 1}  err {error:.4f} rad  [{vel_str}]{speed_str}')
 
         if error < self._tol:
@@ -167,6 +173,7 @@ class TeachAndPlayJointsNode(Node):
             self._wp_speed.clear()
             if self._wp_index >= total:
                 self._finish_playback('Playback complete — returning to TELEOP.')
+                self._println(f'  wp {self._wp_index - 1} reached with avg speed {self.avg_wp_speed:.1f} mm/s')
                 return
             self._println(f'  wp {self._wp_index - 1} reached with avg speed {self.avg_wp_speed:.1f} mm/s— advancing to wp {self._wp_index}')
 
